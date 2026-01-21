@@ -1,15 +1,15 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '@/config/supabase'
 
 export default function RegisterPage() {
   const navigate = useNavigate()
-  const [step, setStep] = useState(1)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [emailSent, setEmailSent] = useState(false)
   
   const [formData, setFormData] = useState({
-    contact: '', // Can be email or phone
+    contact: '', // Email or phone
     full_name: '',
     role: 'customer' as 'customer' | 'driver',
     // Driver specific
@@ -20,8 +20,9 @@ export default function RegisterPage() {
 
   const [cities, setCities] = useState<any[]>([])
 
-  React.useEffect(() => {
+  useEffect(() => {
     loadCities()
+    checkAuthAndCreateProfile()
   }, [])
 
   const loadCities = async () => {
@@ -29,93 +30,59 @@ export default function RegisterPage() {
     setCities(data || [])
   }
 
-  const handleStep1Submit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError('')
-    setLoading(true)
-
-    try {
-      // Detect if email or phone
-      const isEmail = formData.contact.includes('@')
+  // Check if user just logged in via magic link
+  const checkAuthAndCreateProfile = async () => {
+    const { data: { session } } = await supabase.auth.getSession()
+    
+    if (session?.user) {
+      // Get stored registration data from localStorage
+      const storedData = localStorage.getItem('registration_data')
       
-      // Send OTP
-      const { error } = await supabase.auth.signInWithOtp(
-        isEmail
-          ? {
-              email: formData.contact,
-              options: {
-                shouldCreateUser: true,
-              },
-            }
-          : {
-              phone: formData.contact,
-              options: {
-                channel: 'sms',
-              },
-            }
-      )
-
-      if (error) throw error
-
-      setStep(2)
-    } catch (err: any) {
-      setError(err.message || 'Erreur lors de l\'envoi du code')
-    } finally {
-      setLoading(false)
+      if (storedData) {
+        const regData = JSON.parse(storedData)
+        await createUserProfile(session.user.id, regData)
+        localStorage.removeItem('registration_data')
+      } else {
+        // User already exists, redirect to appropriate dashboard
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', session.user.id)
+          .single()
+        
+        if (profile) {
+          navigate(profile.role === 'driver' ? '/driver/dashboard' : '/dashboard')
+        }
+      }
     }
   }
 
-  const [otp, setOtp] = useState('')
-
-  const handleStep2Submit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError('')
-    setLoading(true)
-
+  const createUserProfile = async (userId: string, data: any) => {
     try {
-      // Detect if email or phone
-      const isEmail = formData.contact.includes('@')
+      const isEmail = data.contact.includes('@')
       
-      // Verify OTP
-      const { data: authData, error: authError } = await supabase.auth.verifyOtp(
-        isEmail
-          ? {
-              email: formData.contact,
-              token: otp,
-              type: 'email',
-            }
-          : {
-              phone: formData.contact,
-              token: otp,
-              type: 'sms',
-            }
-      )
-
-      if (authError) throw authError
-      if (!authData.user) throw new Error('Erreur de vérification')
-
       // Create profile
       const { error: profileError } = await supabase
         .from('profiles')
         .insert({
-          id: authData.user.id,
-          phone: isEmail ? null : formData.contact,
-          email: isEmail ? formData.contact : null,
-          full_name: formData.full_name,
-          role: formData.role,
+          id: userId,
+          phone: isEmail ? null : data.contact,
+          email: isEmail ? data.contact : null,
+          full_name: data.full_name,
+          role: data.role,
         })
 
       if (profileError) throw profileError
 
       // If driver, create driver entry
-      if (formData.role === 'driver') {
+      if (data.role === 'driver') {
         const { error: driverError } = await supabase
           .from('drivers')
           .insert({
-            profile_id: authData.user.id,
-            vehicle_type: formData.vehicle_type,
-            vehicle_plate: formData.vehicle_plate,
-            primary_city_id: formData.primary_city_id,
+            profile_id: userId,
+            vehicle_type: data.vehicle_type,
+            vehicle_plate: data.vehicle_plate,
+            primary_city_id: data.primary_city_id,
             onboarding_completed: false,
             is_verified: false,
             online_status: 'offline',
@@ -125,16 +92,95 @@ export default function RegisterPage() {
       }
 
       // Redirect based on role
-      if (formData.role === 'driver') {
-        navigate('/driver/dashboard')
-      } else {
-        navigate('/dashboard')
-      }
+      navigate(data.role === 'driver' ? '/driver/dashboard' : '/dashboard')
     } catch (err: any) {
-      setError(err.message || 'Erreur lors de l\'inscription')
+      console.error('Error creating profile:', err)
+      setError(err.message || 'Erreur lors de la création du profil')
+    }
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+    setLoading(true)
+
+    try {
+      // Detect if email or phone
+      const isEmail = formData.contact.includes('@')
+      
+      if (!isEmail) {
+        throw new Error('Seul l\'email est supporté pour le moment. Le SMS nécessite une configuration Twilio.')
+      }
+
+      // Store registration data in localStorage for after login
+      localStorage.setItem('registration_data', JSON.stringify(formData))
+
+      // Get current URL for redirect
+      const redirectUrl = window.location.origin + '/register'
+      
+      // Send Magic Link
+      const { error } = await supabase.auth.signInWithOtp({
+        email: formData.contact,
+        options: {
+          emailRedirectTo: redirectUrl,
+          shouldCreateUser: true,
+        },
+      })
+
+      if (error) throw error
+
+      setEmailSent(true)
+    } catch (err: any) {
+      setError(err.message || 'Erreur lors de l\'envoi de l\'email')
     } finally {
       setLoading(false)
     }
+  }
+
+  // If email sent, show success message
+  if (emailSent) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
+        <div className="sm:mx-auto sm:w-full sm:max-w-md">
+          <h1 className="text-center text-4xl font-bold text-blue-600 mb-2">
+            📧 Email envoyé !
+          </h1>
+          <div className="mt-8 bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
+            <div className="text-center">
+              <div className="text-6xl mb-4">✉️</div>
+              <h3 className="text-lg font-medium text-gray-900 mb-2">
+                Vérifiez votre boîte email
+              </h3>
+              <p className="text-sm text-gray-600 mb-6">
+                Nous avons envoyé un lien de connexion à <strong>{formData.contact}</strong>
+              </p>
+              <div className="bg-blue-50 rounded-lg p-4 text-left mb-6">
+                <p className="text-sm text-gray-700 mb-2">
+                  <strong>Étapes suivantes :</strong>
+                </p>
+                <ol className="text-sm text-gray-600 space-y-1 list-decimal list-inside">
+                  <li>Ouvrez votre boîte email</li>
+                  <li>Cliquez sur le lien "Log In"</li>
+                  <li>Vous serez automatiquement connecté</li>
+                </ol>
+              </div>
+              <p className="text-xs text-gray-500 mb-4">
+                💡 Si vous ne voyez pas l'email, vérifiez vos spams
+              </p>
+              <button
+                onClick={() => {
+                  setEmailSent(false)
+                  setFormData({ ...formData, contact: '' })
+                }}
+                className="text-sm text-blue-600 hover:text-blue-800"
+              >
+                Utiliser un autre email
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -147,194 +193,142 @@ export default function RegisterPage() {
           Créer un compte
         </h2>
         <p className="mt-2 text-center text-sm text-gray-600">
-          {step === 1 ? 'Entrez vos informations' : 'Vérification du code'}
+          Inscription rapide par email
         </p>
       </div>
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
         <div className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
-          {/* Step 1: Basic Info */}
-          {step === 1 && (
-            <form onSubmit={handleStep1Submit} className="space-y-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700">
-                  Nom complet
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={formData.full_name}
-                  onChange={e => setFormData({ ...formData, full_name: e.target.value })}
-                  className="input mt-1"
-                  placeholder="Jean Dupont"
-                />
-              </div>
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Nom complet
+              </label>
+              <input
+                type="text"
+                required
+                value={formData.full_name}
+                onChange={e => setFormData({ ...formData, full_name: e.target.value })}
+                className="input mt-1"
+                placeholder="Jean Dupont"
+              />
+            </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700">
-                  Email ou Téléphone
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={formData.contact}
-                  onChange={e => setFormData({ ...formData, contact: e.target.value })}
-                  className="input mt-1"
-                  placeholder="email@example.com ou +226 XX XX XX XX"
-                />
-                <p className="mt-1 text-xs text-gray-500">
-                  📧 Email (gratuit) ou 📱 Téléphone (SMS payant)
-                </p>
-              </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Email
+              </label>
+              <input
+                type="email"
+                required
+                value={formData.contact}
+                onChange={e => setFormData({ ...formData, contact: e.target.value })}
+                className="input mt-1"
+                placeholder="email@example.com"
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                📧 Vous recevrez un lien de connexion par email
+              </p>
+            </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Type de compte
-                </label>
-                <div className="grid grid-cols-2 gap-4">
-                  <button
-                    type="button"
-                    onClick={() => setFormData({ ...formData, role: 'customer' })}
-                    className={`p-4 border-2 rounded-lg text-center ${
-                      formData.role === 'customer'
-                        ? 'border-blue-600 bg-blue-50'
-                        : 'border-gray-200'
-                    }`}
-                  >
-                    <div className="text-2xl mb-1">👤</div>
-                    <div className="font-medium">Client</div>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setFormData({ ...formData, role: 'driver' })}
-                    className={`p-4 border-2 rounded-lg text-center ${
-                      formData.role === 'driver'
-                        ? 'border-blue-600 bg-blue-50'
-                        : 'border-gray-200'
-                    }`}
-                  >
-                    <div className="text-2xl mb-1">🚚</div>
-                    <div className="font-medium">Chauffeur</div>
-                  </button>
-                </div>
-              </div>
-
-              {/* Driver specific fields */}
-              {formData.role === 'driver' && (
-                <>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      Type de véhicule
-                    </label>
-                    <select
-                      value={formData.vehicle_type}
-                      onChange={e => setFormData({ ...formData, vehicle_type: e.target.value as any })}
-                      className="input mt-1"
-                    >
-                      <option value="moto">🏍️ Moto</option>
-                      <option value="car">🚗 Voiture</option>
-                      <option value="van">🚐 Van</option>
-                      <option value="truck">🚛 Camion</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      Plaque d'immatriculation
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={formData.vehicle_plate}
-                      onChange={e => setFormData({ ...formData, vehicle_plate: e.target.value })}
-                      className="input mt-1"
-                      placeholder="BF-123-ABC"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      Ville principale
-                    </label>
-                    <select
-                      required
-                      value={formData.primary_city_id}
-                      onChange={e => setFormData({ ...formData, primary_city_id: e.target.value })}
-                      className="input mt-1"
-                    >
-                      <option value="">Sélectionner une ville</option>
-                      {cities.map(city => (
-                        <option key={city.id} value={city.id}>{city.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                </>
-              )}
-
-              {error && (
-                <div className="rounded-md bg-red-50 p-4">
-                  <p className="text-sm text-red-800">{error}</p>
-                </div>
-              )}
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full btn btn-primary disabled:opacity-50"
-              >
-                {loading ? 'Envoi...' : 'Recevoir le code'}
-              </button>
-            </form>
-          )}
-
-          {/* Step 2: OTP Verification */}
-          {step === 2 && (
-            <form onSubmit={handleStep2Submit} className="space-y-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700">
-                  Code de vérification
-                </label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  maxLength={6}
-                  required
-                  value={otp}
-                  onChange={e => setOtp(e.target.value.replace(/\D/g, ''))}
-                  className="input mt-1 text-center text-2xl tracking-widest"
-                  placeholder="123456"
-                  autoFocus
-                />
-                <p className="mt-2 text-sm text-gray-500">
-                  Code envoyé à {formData.contact}
-                </p>
-              </div>
-
-              {error && (
-                <div className="rounded-md bg-red-50 p-4">
-                  <p className="text-sm text-red-800">{error}</p>
-                </div>
-              )}
-
-              <div className="flex gap-2">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Type de compte
+              </label>
+              <div className="grid grid-cols-2 gap-4">
                 <button
                   type="button"
-                  onClick={() => setStep(1)}
-                  className="flex-1 btn btn-secondary"
+                  onClick={() => setFormData({ ...formData, role: 'customer' })}
+                  className={`p-4 border-2 rounded-lg text-center transition-colors ${
+                    formData.role === 'customer'
+                      ? 'border-blue-600 bg-blue-50'
+                      : 'border-gray-200 hover:border-gray-300'
+                  }`}
                 >
-                  Retour
+                  <div className="text-2xl mb-1">👤</div>
+                  <div className="font-medium">Client</div>
                 </button>
                 <button
-                  type="submit"
-                  disabled={loading || otp.length !== 6}
-                  className="flex-1 btn btn-primary disabled:opacity-50"
+                  type="button"
+                  onClick={() => setFormData({ ...formData, role: 'driver' })}
+                  className={`p-4 border-2 rounded-lg text-center transition-colors ${
+                    formData.role === 'driver'
+                      ? 'border-blue-600 bg-blue-50'
+                      : 'border-gray-200 hover:border-gray-300'
+                  }`}
                 >
-                  {loading ? 'Vérification...' : 'Créer mon compte'}
+                  <div className="text-2xl mb-1">🚚</div>
+                  <div className="font-medium">Chauffeur</div>
                 </button>
               </div>
-            </form>
-          )}
+            </div>
+
+            {/* Driver specific fields */}
+            {formData.role === 'driver' && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">
+                    Type de véhicule
+                  </label>
+                  <select
+                    value={formData.vehicle_type}
+                    onChange={e => setFormData({ ...formData, vehicle_type: e.target.value as any })}
+                    className="input mt-1"
+                  >
+                    <option value="moto">🏍️ Moto</option>
+                    <option value="car">🚗 Voiture</option>
+                    <option value="van">🚐 Van</option>
+                    <option value="truck">🚛 Camion</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">
+                    Plaque d'immatriculation
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={formData.vehicle_plate}
+                    onChange={e => setFormData({ ...formData, vehicle_plate: e.target.value })}
+                    className="input mt-1"
+                    placeholder="BF-123-ABC"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">
+                    Ville principale
+                  </label>
+                  <select
+                    required
+                    value={formData.primary_city_id}
+                    onChange={e => setFormData({ ...formData, primary_city_id: e.target.value })}
+                    className="input mt-1"
+                  >
+                    <option value="">Sélectionner une ville</option>
+                    {cities.map(city => (
+                      <option key={city.id} value={city.id}>{city.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )}
+
+            {error && (
+              <div className="rounded-md bg-red-50 p-4">
+                <p className="text-sm text-red-800">{error}</p>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full btn btn-primary disabled:opacity-50"
+            >
+              {loading ? 'Envoi...' : 'Créer mon compte'}
+            </button>
+          </form>
 
           <div className="mt-6 text-center">
             <button
