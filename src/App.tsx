@@ -6,6 +6,7 @@ import { OfflineBadge } from '@/components/OfflineBadge'
 
 // Pages
 import LoginPage from '@/pages/LoginPage'
+import RegisterPage from '@/pages/RegisterPage'
 import VerifyOtpPage from '@/pages/VerifyOtpPage'
 import WelcomePage from '@/pages/WelcomePage'
 import CustomerDashboard from '@/pages/customer/CustomerDashboard'
@@ -29,6 +30,7 @@ function App() {
         <Routes>
           {/* Public routes */}
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
           <Route path="/verify-otp" element={<VerifyOtpPage />} />
           <Route path="/welcome" element={<WelcomePage />} />
 
