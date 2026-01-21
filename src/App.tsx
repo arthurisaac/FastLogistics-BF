@@ -9,6 +9,7 @@ import LoginPage from '@/pages/LoginPage'
 import RegisterPage from '@/pages/RegisterPage'
 import VerifyOtpPage from '@/pages/VerifyOtpPage'
 import WelcomePage from '@/pages/WelcomePage'
+import ProfileSetupPage from '@/pages/ProfileSetupPage'
 import CustomerDashboard from '@/pages/customer/CustomerDashboard'
 import BookingPage from '@/pages/customer/BookingPage'
 import TrackingPage from '@/pages/customer/TrackingPage'
@@ -33,6 +34,7 @@ function App() {
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/verify-otp" element={<VerifyOtpPage />} />
           <Route path="/welcome" element={<WelcomePage />} />
+          <Route path="/profile-setup" element={<ProfileSetupPage />} />
 
           {/* Customer routes */}
           <Route

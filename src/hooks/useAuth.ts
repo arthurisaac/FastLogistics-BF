@@ -21,9 +21,18 @@ export function useAuth() {
         .from('profiles')
         .select('*')
         .eq('id', userId)
-        .single()
+        .maybeSingle() // Use maybeSingle() instead of single() to handle 0 rows
 
       if (error) throw error
+      
+      if (!data) {
+        console.warn('Profile not found for user:', userId)
+        console.warn('User is authenticated but profile does not exist in the database')
+        console.warn('This usually means the profile was not created during registration')
+        setProfile(null)
+        return
+      }
+      
       setProfile(data)
     } catch (error) {
       console.error('Error fetching profile:', error)
