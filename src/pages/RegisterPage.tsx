@@ -9,7 +9,7 @@ export default function RegisterPage() {
   const [error, setError] = useState('')
   
   const [formData, setFormData] = useState({
-    phone: '',
+    contact: '', // Can be email or phone
     full_name: '',
     role: 'customer' as 'customer' | 'driver',
     // Driver specific
@@ -35,13 +35,25 @@ export default function RegisterPage() {
     setLoading(true)
 
     try {
+      // Detect if email or phone
+      const isEmail = formData.contact.includes('@')
+      
       // Send OTP
-      const { error } = await supabase.auth.signInWithOtp({
-        phone: formData.phone,
-        options: {
-          channel: 'sms',
-        },
-      })
+      const { error } = await supabase.auth.signInWithOtp(
+        isEmail
+          ? {
+              email: formData.contact,
+              options: {
+                shouldCreateUser: true,
+              },
+            }
+          : {
+              phone: formData.contact,
+              options: {
+                channel: 'sms',
+              },
+            }
+      )
 
       if (error) throw error
 
@@ -61,12 +73,23 @@ export default function RegisterPage() {
     setLoading(true)
 
     try {
+      // Detect if email or phone
+      const isEmail = formData.contact.includes('@')
+      
       // Verify OTP
-      const { data: authData, error: authError } = await supabase.auth.verifyOtp({
-        phone: formData.phone,
-        token: otp,
-        type: 'sms',
-      })
+      const { data: authData, error: authError } = await supabase.auth.verifyOtp(
+        isEmail
+          ? {
+              email: formData.contact,
+              token: otp,
+              type: 'email',
+            }
+          : {
+              phone: formData.contact,
+              token: otp,
+              type: 'sms',
+            }
+      )
 
       if (authError) throw authError
       if (!authData.user) throw new Error('Erreur de vérification')
@@ -76,7 +99,8 @@ export default function RegisterPage() {
         .from('profiles')
         .insert({
           id: authData.user.id,
-          phone: formData.phone,
+          phone: isEmail ? null : formData.contact,
+          email: isEmail ? formData.contact : null,
           full_name: formData.full_name,
           role: formData.role,
         })
@@ -148,16 +172,19 @@ export default function RegisterPage() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700">
-                  Téléphone
+                  Email ou Téléphone
                 </label>
                 <input
-                  type="tel"
+                  type="text"
                   required
-                  value={formData.phone}
-                  onChange={e => setFormData({ ...formData, phone: e.target.value })}
+                  value={formData.contact}
+                  onChange={e => setFormData({ ...formData, contact: e.target.value })}
                   className="input mt-1"
-                  placeholder="+226 XX XX XX XX"
+                  placeholder="email@example.com ou +226 XX XX XX XX"
                 />
+                <p className="mt-1 text-xs text-gray-500">
+                  📧 Email (gratuit) ou 📱 Téléphone (SMS payant)
+                </p>
               </div>
 
               <div>
@@ -280,7 +307,7 @@ export default function RegisterPage() {
                   autoFocus
                 />
                 <p className="mt-2 text-sm text-gray-500">
-                  Code envoyé à {formData.phone}
+                  Code envoyé à {formData.contact}
                 </p>
               </div>
 
